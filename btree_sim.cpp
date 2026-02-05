@@ -1,190 +1,249 @@
+/**
+ * In-Memory B+ Tree Simulation & Visualizer
+ * * Capabilities:
+ * 1. Implements Order-3 B+ Tree logic (Split, Promote).
+ * 2. Generates a 'btree_viz.html' file automatically.
+ */
+
 #include <iostream>
 #include <vector>
 #include <algorithm>
 #include <queue>
+#include <fstream>
+#include <string>
 
 // --- CONFIGURATION ---
-const int MAX_KEYS = 3; // Small size to force splits
+constexpr int ORDER = 3;
 
-// --- NODE STRUCTURES ---
+// --- NODE DEFINITIONS ---
+enum class NodeType { Internal, Leaf };
+
 struct Node {
-    bool is_leaf;
+    NodeType type;
     std::vector<int> keys;
     Node* parent;
+    int id; // Unique ID for visualization
 
-    Node(bool leaf) : is_leaf(leaf), parent(nullptr) {}
-    virtual ~Node() {}
+    Node(NodeType t) : type(t), parent(nullptr) {
+        static int _id_counter = 0;
+        id = _id_counter++;
+    }
+    virtual ~Node() = default;
 };
 
 struct InternalNode : Node {
     std::vector<Node*> children;
-    InternalNode() : Node(false) {}
+    InternalNode() : Node(NodeType::Internal) {}
 };
 
 struct LeafNode : Node {
-    LeafNode* next;
-    LeafNode() : Node(true), next(nullptr) {}
+    LeafNode* next_leaf;
+    LeafNode() : Node(NodeType::Leaf), next_leaf(nullptr) {}
 };
 
 // --- B+ TREE CLASS ---
 class BPlusTree {
 public:
-    Node* root;
-
-    BPlusTree() {
-        root = new LeafNode();
-    }
-
-    // --- HELPER: FIND LEAF ---
-    LeafNode* find_leaf(int key) {
-        Node* curr = root;
-        while (!curr->is_leaf) {
-            InternalNode* internal = static_cast<InternalNode*>(curr);
-            size_t i = 0;
-            while (i < internal->keys.size() && key >= internal->keys[i]) {
-                i++;
-            }
-            curr = internal->children[i];
-        }
-        return static_cast<LeafNode*>(curr);
-    }
-
-    // --- INSERTION ---
+    BPlusTree() { root = new LeafNode(); }
+    
+    // --- INSERTION LOGIC ---
     void insert(int key) {
-        LeafNode* leaf = find_leaf(key);
-        leaf->keys.push_back(key);
-        std::sort(leaf->keys.begin(), leaf->keys.end());
+        LeafNode* leaf = find_leaf(root, key);
+        auto it = std::upper_bound(leaf->keys.begin(), leaf->keys.end(), key);
+        leaf->keys.insert(it, key);
 
-        if (leaf->keys.size() > MAX_KEYS) {
+        if (leaf->keys.size() > ORDER) {
             split_leaf(leaf);
         }
     }
 
-    // --- LEAF SPLIT  ---
-    void split_leaf(LeafNode* left) {
-        LeafNode* right = new LeafNode();
-        int split_index = (left->keys.size() + 1) / 2;
+    // --- VISUALIZATION ENGINE ---
+    void generate_html_report(std::string filename) {
+        std::ofstream outfile(filename);
+        
+        // 1. Write HTML Header & CSS (Using custom delimiter "HTML")
+        outfile << R"HTML(
+<!DOCTYPE html>
+<html>
+<head>
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <style>
+    body { font-family: sans-serif; background: #f4f4f9; display: flex; flex-direction: column; align-items: center; }
+    h2 { color: #333; }
+    .node rect { fill: #fff; stroke: #333; stroke-width: 2px; rx: 5; ry: 5; }
+    .node text { font: 14px sans-serif; text-anchor: middle; dominant-baseline: middle; }
+    .node-internal rect { stroke: #2196F3; fill: #E3F2FD; }
+    .node-leaf rect { stroke: #4CAF50; fill: #E8F5E9; }
+    .link { fill: none; stroke: #ccc; stroke-width: 2px; }
+  </style>
+</head>
+<body>
+  <h2>B+ Tree Structure (Order 3)</h2>
+  <div id="tree-container"></div>
+  <script>
+    const treeData = )HTML";
 
-        for (size_t i = split_index; i < left->keys.size(); i++) right->keys.push_back(left->keys[i]);
-        left->keys.resize(split_index);
+        // 2. Dump Tree as JSON
+        dump_node_json(root, outfile);
 
-        right->next = left->next;
-        left->next = right;
+        // 3. Write D3.js Visualization Script (Using custom delimiter "HTML")
+        outfile << R"HTML(;
 
-        int promote_key = right->keys[0]; // Copy the key
-        insert_into_parent(left, promote_key, right);
+    // Set dimensions
+    const margin = {top: 40, right: 90, bottom: 50, left: 90},
+          width = 1200 - margin.left - margin.right,
+          height = 600 - margin.top - margin.bottom;
+
+    const svg = d3.select("#tree-container").append("svg")
+        .attr("width", width + margin.left + margin.right)
+        .attr("height", height + margin.top + margin.bottom)
+      .append("g")
+        .attr("transform", "translate(" + margin.left + "," + margin.top + ")");
+
+    const treemap = d3.tree().size([width, height]);
+    let root = d3.hierarchy(treeData);
+    
+    // Assign sizes based on content
+    root.descendants().forEach(d => {
+       d.data.width = (d.data.keys.length * 25) + 20; 
+       d.data.height = 30;
+    });
+
+    const nodes = treemap(root);
+
+    // Links
+    svg.selectAll(".link")
+        .data(nodes.links())
+      .enter().append("path")
+        .attr("class", "link")
+        .attr("d", d => {
+           return "M" + d.source.x + "," + d.source.y
+             + "C" + d.source.x + "," + (d.source.y + d.target.y) / 2
+             + " " + d.target.x + "," + (d.source.y + d.target.y) / 2
+             + " " + d.target.x + "," + d.target.y;
+           });
+
+    // Nodes
+    const node = svg.selectAll(".node")
+        .data(nodes.descendants())
+      .enter().append("g")
+        .attr("class", d => "node " + (d.children ? "node-internal" : "node-leaf"))
+        .attr("transform", d => "translate(" + d.x + "," + d.y + ")");
+
+    // Node Box
+    node.append("rect")
+        .attr("width", d => Math.max(40, d.data.keys.length * 20 + 20))
+        .attr("height", 30)
+        .attr("x", d => -(Math.max(40, d.data.keys.length * 20 + 20)) / 2)
+        .attr("y", -15);
+
+    // Node Text (Keys)
+    node.append("text")
+        .text(d => d.data.keys.join(" | "));
+
+  </script>
+</body>
+</html>
+)HTML";
+        outfile.close();
+        std::cout << "Visualization saved to 'btree_viz.html'\n";
     }
 
-    // --- INTERNAL SPLIT (PUSH UP) ---
-    void split_internal(InternalNode* left) {
-        InternalNode* right = new InternalNode();
-        
-        // 1. Determine Split Point
-        // If keys are [3, 5, 7, 9], size is 4. Mid is index 2 (Key 7).
-        int mid_index = left->keys.size() / 2;
-        int promote_key = left->keys[mid_index]; // This key goes UP
+private:
+    Node* root;
 
-        // 2. Move Keys to Right Node (Strictly AFTER mid)
-        // Right gets [9]
-        for (size_t i = mid_index + 1; i < left->keys.size(); i++) {
-            right->keys.push_back(left->keys[i]);
+    // --- JSON DUMPER ---
+    void dump_node_json(Node* node, std::ostream& out) {
+        if (!node) return;
+        out << "{";
+        out << "\"type\": \"" << (node->type == NodeType::Internal ? "Internal" : "Leaf") << "\",";
+        out << "\"keys\": [";
+        for (size_t i = 0; i < node->keys.size(); ++i) {
+            out << node->keys[i] << (i < node->keys.size() - 1 ? "," : "");
         }
+        out << "]";
 
-        // 3. Move Children to Right Node
-        // An internal node with N keys has N+1 children.
-        // We move the second half of children to the new node.
-        for (size_t i = mid_index + 1; i < left->children.size(); i++) {
-            right->children.push_back(left->children[i]);
-            left->children[i]->parent = right; // Update child's parent ptr
+        if (node->type == NodeType::Internal) {
+            out << ", \"children\": [";
+            InternalNode* internal = static_cast<InternalNode*>(node);
+            for (size_t i = 0; i < internal->children.size(); ++i) {
+                dump_node_json(internal->children[i], out);
+                if (i < internal->children.size() - 1) out << ",";
+            }
+            out << "]";
         }
+        out << "}";
+    }
 
-        // 4. Resize Left Node
-        // Left keeps [3, 5]. promote_key (7) is removed from both!
-        left->keys.resize(mid_index);
-        left->children.resize(mid_index + 1);
-
-        // 5. Recursive Push
-        insert_into_parent(left, promote_key, right);
+    // --- HELPERS ---
+    LeafNode* find_leaf(Node* node, int key) {
+        if (node->type == NodeType::Leaf) return static_cast<LeafNode*>(node);
+        InternalNode* internal = static_cast<InternalNode*>(node);
+        size_t i = 0;
+        while (i < internal->keys.size() && key >= internal->keys[i]) i++;
+        return find_leaf(internal->children[i], key);
     }
 
     void insert_into_parent(Node* left, int key, Node* right) {
-        // Case 1: Root Split
         if (left->parent == nullptr) {
-            InternalNode* new_root = new InternalNode();
-            new_root->keys.push_back(key);
-            new_root->children.push_back(left);
-            new_root->children.push_back(right);
-            left->parent = new_root;
-            right->parent = new_root;
-            root = new_root;
-            std::cout << "DEBUG: Root Split! New Root Key: " << key << "\n";
+            create_new_root(left, key, right);
             return;
         }
-
-        // Case 2: Generic Parent Insert
         InternalNode* parent = static_cast<InternalNode*>(left->parent);
-        size_t insert_pos = 0;
-        while (insert_pos < parent->keys.size() && parent->keys[insert_pos] < key) insert_pos++;
-
-        parent->keys.insert(parent->keys.begin() + insert_pos, key);
-        parent->children.insert(parent->children.begin() + insert_pos + 1, right);
+        auto it = std::upper_bound(parent->keys.begin(), parent->keys.end(), key);
+        size_t index = std::distance(parent->keys.begin(), it);
+        parent->keys.insert(it, key);
+        parent->children.insert(parent->children.begin() + index + 1, right);
         right->parent = parent;
-
-        // Case 3: Recursion
-        if (parent->keys.size() > MAX_KEYS) {
-            std::cout << "DEBUG: Internal Node Overflow! Splitting...\n";
-            split_internal(parent);
-        }
+        if (parent->keys.size() > ORDER) split_internal(parent);
     }
 
-    // --- VISUALIZATION ---
-    void print() {
-        if (!root) return;
-        std::cout << "\n--- Tree Structure ---\n";
-        std::queue<Node*> q;
-        q.push(root);
-        while (!q.empty()) {
-            int level_size = q.size();
-            while (level_size > 0) {
-                Node* current = q.front();
-                q.pop();
+    void split_leaf(LeafNode* left) {
+        LeafNode* right = new LeafNode();
+        size_t split_index = (left->keys.size() + 1) / 2;
+        right->keys.assign(left->keys.begin() + split_index, left->keys.end());
+        left->keys.resize(split_index);
+        right->next_leaf = left->next_leaf;
+        left->next_leaf = right;
+        int promote_key = right->keys.front();
+        insert_into_parent(left, promote_key, right);
+    }
 
-                std::cout << "[";
-                for (size_t i = 0; i < current->keys.size(); i++) {
-                    std::cout << current->keys[i];
-                    if (i < current->keys.size() - 1) std::cout << "|";
-                }
-                std::cout << "] ";
+    void split_internal(InternalNode* left) {
+        InternalNode* right = new InternalNode();
+        size_t mid_index = left->keys.size() / 2;
+        int promote_key = left->keys[mid_index];
+        right->keys.assign(left->keys.begin() + mid_index + 1, left->keys.end());
+        right->children.assign(left->children.begin() + mid_index + 1, left->children.end());
+        for (Node* child : right->children) child->parent = right;
+        left->keys.resize(mid_index);
+        left->children.resize(mid_index + 1);
+        insert_into_parent(left, promote_key, right);
+    }
 
-                if (!current->is_leaf) {
-                    InternalNode* internal = static_cast<InternalNode*>(current);
-                    for (Node* child : internal->children) q.push(child);
-                }
-                level_size--;
-            }
-            std::cout << "\n";
-        }
-        std::cout << "----------------------\n";
+    void create_new_root(Node* left, int key, Node* right) {
+        InternalNode* new_root = new InternalNode();
+        new_root->keys.push_back(key);
+        new_root->children.push_back(left);
+        new_root->children.push_back(right);
+        left->parent = new_root;
+        right->parent = new_root;
+        root = new_root;
     }
 };
 
 int main() {
     BPlusTree tree;
+    std::cout << "Running B+ Tree Simulation (Order " << ORDER << ")...\n";
 
-    // 1. Fill leaf (1, 2, 3)
-    // 2. Split Leaf -> Root [3], Leaves [1,2], [3,4]
-    // 3. Keep inserting to fill the Root Node
-    // Root Max Keys = 3. We need 4 keys in Root to force it to split.
-    // Each key in root comes from a Leaf Split.
-    // So we need about 12-13 inserts to trigger a height increase.
-    
-    std::cout << "--- Inserting 1 to 15 ---\n";
-    for (int i = 1; i <= 15; i++) {
-        std::cout << "Inserting " << i << "...\n";
+    // Insert data 
+    for (int i = 1; i <= 20; ++i) {
         tree.insert(i);
-        // tree.print(); // Uncomment to see every step
     }
-    
-    tree.print();
+    tree.insert(50);
+    tree.insert(25);
+    tree.insert(100);
+
+    tree.generate_html_report("btree_viz.html");
     return 0;
 }
