@@ -1,2 +1,11 @@
 .DS_Store
 my_database.db
+
+# Build artifacts
+forgedb
+forgedb_small
+src/*.o
+src/*.d
+*.o
+*.d
+main.cpp.bak
