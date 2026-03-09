@@ -5,7 +5,7 @@ CXX      = clang++
 CXXFLAGS = -Wall -Wextra -std=c++17 -Iinclude -MMD -MP
 
 # Source files
-SRCS = src/main.cpp src/btree.cpp src/node.cpp src/pager.cpp src/bloom.cpp src/utils.cpp
+SRCS = src/main.cpp src/pager.cpp src/node.cpp src/btree.cpp src/bloom.cpp src/utils.cpp src/tokenizer.cpp src/parser.cpp
 OBJS = $(SRCS:.cpp=.o)
 DEPS = $(OBJS:.o=.d)
 

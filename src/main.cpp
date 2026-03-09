@@ -4,6 +4,8 @@
 #include <string>
 #include <cstdio>
 #include <cstring>
+#include <tokenizer.h>
+#include <parser.h>
 
 // ==========================================
 // HELPER: Handle a single command string
@@ -43,6 +45,26 @@ void handle_command(const std::string& input, BTree& tree, Pager& pager) {
             }
         } else {
             std::cout << "Usage: lookup <id>\n";
+        }
+    } else if (input.substr(0, 4) == "sql ") {
+        std::string query = input.substr(4);
+        
+        // 1. Tokenize
+        Tokenizer tokenizer(query);
+        std::vector<Token> tokens = tokenizer.tokenize();
+        
+        // 2. Parse
+        Parser parser(tokens);
+        Statement statement;
+        if (parser.parse_statement(statement)) {
+            
+            // 3. Execute (Virtual Machine Phase)
+            if (statement.type == STATEMENT_INSERT) {
+                tree.insert(statement.row_to_insert.id, statement.row_to_insert);
+                // "Executed." will be printed by the BTree
+            }
+        } else {
+            std::cout << "Syntax Error in SQL query.\n";
         }
     } else if (input == ".tree") {
         tree.print_tree();
